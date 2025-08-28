@@ -18,7 +18,11 @@ const colors = {
   green: '\x1b[32m',
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
-  reset: '\x1b[0m'
+  cyan: '\x1b[36m',
+  magenta: '\x1b[35m',
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m'
 };
 
 // Configuration
@@ -32,18 +36,63 @@ let config = {
   excludePatterns: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
 };
 
-// Counters
+// Enhanced statistics tracking for comprehensive reporting
 let stats = {
+  // File-level statistics
   totalFiles: 0,
   filesWithConsoleLog: 0,
   modifiedFiles: 0,
+  
+  // Console.log detection statistics
   totalConsoleLogFound: 0,
+  totalConsoleLogProcessed: 0,
+  
+  // Action statistics - tracking found vs removed vs converted
   totalRemoved: 0,
   totalConverted: 0,
+  totalKept: 0,
+  
+  // Breakdown by action type
+  convertedToInfo: 0,
+  convertedToError: 0,
   commentedLogsRemoved: 0,
   functionalLogsPreserved: 0,
+  
+  // Security-related statistics
   potentiallySensitive: 0,
-  processingTime: 0
+  sensitiveLogsRemoved: 0,
+  sensitiveLogsKept: 0,
+  sensitiveLogsByRiskLevel: {
+    high: 0,
+    medium: 0,
+    low: 0
+  },
+  
+  // Manual mode decision tracking
+  userDecisions: {
+    delete: 0,
+    keep: 0,
+    convertInfo: 0,
+    convertError: 0,
+    skip: 0
+  },
+  
+  // Performance and processing statistics
+  processingTime: 0,
+  averageTimePerFile: 0,
+  
+  // Context-based statistics
+  consoleLogsInCatchBlocks: 0,
+  functionalConsoleLogsDetected: 0,
+  commentedConsoleLogsFound: 0,
+  
+  // Error and warning tracking
+  processingErrors: 0,
+  warningsGenerated: 0,
+  
+  // Recommendations tracking
+  recommendationsGenerated: [],
+  securityImprovements: []
 };
 
 function showUsage() {
@@ -598,6 +647,248 @@ function detectSensitiveData(line) {
 }
 
 /**
+ * Generate comprehensive summary report with security improvements and recommendations
+ * @param {Object} stats - Statistics object
+ * @param {Object} config - Configuration object
+ * @param {Object} colors - Color constants
+ */
+function generateSummaryReport(stats, config, colors) {
+  console.log(`\n${colors.blue}${'='.repeat(60)}${colors.reset}`);
+  console.log(`${colors.blue}${colors.bold}           CONSOLE.LOG CLEANUP SUMMARY REPORT${colors.reset}`);
+  console.log(`${colors.blue}${'='.repeat(60)}${colors.reset}`);
+  
+  // Basic file processing statistics
+  console.log(`\n${colors.blue}📁 FILE PROCESSING OVERVIEW${colors.reset}`);
+  console.log(`   Files scanned: ${colors.cyan}${stats.totalFiles}${colors.reset}`);
+  console.log(`   Files with console.log: ${colors.cyan}${stats.filesWithConsoleLog}${colors.reset}`);
+  
+  if (config.dryRun) {
+    console.log(`   Files that would be modified: ${colors.yellow}${stats.modifiedFiles}${colors.reset}`);
+  } else {
+    console.log(`   Files modified: ${colors.green}${stats.modifiedFiles}${colors.reset}`);
+  }
+  
+  // Console.log analysis breakdown
+  console.log(`\n${colors.blue}🔍 CONSOLE.LOG ANALYSIS${colors.reset}`);
+  console.log(`   Total console.log statements found: ${colors.cyan}${stats.totalConsoleLogFound}${colors.reset}`);
+  console.log(`   Statements processed: ${colors.cyan}${stats.totalConsoleLogProcessed}${colors.reset}`);
+  
+  // Actions taken breakdown
+  console.log(`\n${colors.blue}⚡ ACTIONS TAKEN${colors.reset}`);
+  const actionVerb = config.dryRun ? 'would be' : 'were';
+  
+  if (stats.totalRemoved > 0) {
+    console.log(`   ${colors.red}🗑️  Removed: ${stats.totalRemoved} statements ${actionVerb} deleted${colors.reset}`);
+  }
+  
+  if (stats.totalConverted > 0) {
+    console.log(`   ${colors.yellow}🔄 Converted: ${stats.totalConverted} statements ${actionVerb} converted${colors.reset}`);
+    if (stats.convertedToInfo > 0) {
+      console.log(`      ├─ To console.info: ${colors.cyan}${stats.convertedToInfo}${colors.reset}`);
+    }
+    if (stats.convertedToError > 0) {
+      console.log(`      └─ To console.error: ${colors.magenta}${stats.convertedToError}${colors.reset}`);
+    }
+  }
+  
+  if (stats.totalKept > 0) {
+    console.log(`   ${colors.green}✅ Preserved: ${stats.totalKept} statements ${actionVerb} kept${colors.reset}`);
+  }
+  
+  if (stats.commentedLogsRemoved > 0) {
+    console.log(`   ${colors.dim}💬 Commented logs removed: ${stats.commentedLogsRemoved}${colors.reset}`);
+  }
+  
+  // Security improvements section
+  if (stats.potentiallySensitive > 0) {
+    console.log(`\n${colors.red}🔒 SECURITY IMPROVEMENTS${colors.reset}`);
+    console.log(`   Potentially sensitive logs identified: ${colors.red}${stats.potentiallySensitive}${colors.reset}`);
+    
+    if (stats.sensitiveLogsByRiskLevel.high > 0) {
+      console.log(`   ${colors.red}⚠️  HIGH RISK: ${stats.sensitiveLogsByRiskLevel.high} statements${colors.reset}`);
+    }
+    if (stats.sensitiveLogsByRiskLevel.medium > 0) {
+      console.log(`   ${colors.yellow}⚠️  MEDIUM RISK: ${stats.sensitiveLogsByRiskLevel.medium} statements${colors.reset}`);
+    }
+    if (stats.sensitiveLogsByRiskLevel.low > 0) {
+      console.log(`   ${colors.blue}ℹ️  LOW RISK: ${stats.sensitiveLogsByRiskLevel.low} statements${colors.reset}`);
+    }
+    
+    if (stats.sensitiveLogsRemoved > 0) {
+      console.log(`   ${colors.green}✅ Sensitive logs removed: ${stats.sensitiveLogsRemoved}${colors.reset}`);
+    }
+    if (stats.sensitiveLogsKept > 0) {
+      console.log(`   ${colors.yellow}⚠️  Sensitive logs remaining: ${stats.sensitiveLogsKept}${colors.reset}`);
+    }
+  }
+  
+  // Context-based analysis
+  if (stats.consoleLogsInCatchBlocks > 0 || stats.functionalConsoleLogsDetected > 0) {
+    console.log(`\n${colors.blue}🧠 INTELLIGENT ANALYSIS${colors.reset}`);
+    
+    if (stats.functionalConsoleLogsDetected > 0) {
+      console.log(`   Functional logs detected: ${colors.cyan}${stats.functionalConsoleLogsDetected}${colors.reset}`);
+      console.log(`   Functional logs preserved: ${colors.green}${stats.functionalLogsPreserved}${colors.reset}`);
+    }
+    
+    if (stats.consoleLogsInCatchBlocks > 0) {
+      console.log(`   Console.logs in catch blocks: ${colors.cyan}${stats.consoleLogsInCatchBlocks}${colors.reset}`);
+    }
+    
+    if (stats.commentedConsoleLogsFound > 0) {
+      console.log(`   Commented console.logs found: ${colors.dim}${stats.commentedConsoleLogsFound}${colors.reset}`);
+    }
+  }
+  
+  // Manual mode decision tracking
+  if (config.mode === 'manual' && stats.userDecisions.delete + stats.userDecisions.keep + stats.userDecisions.convertInfo + stats.userDecisions.convertError > 0) {
+    console.log(`\n${colors.blue}👤 USER DECISIONS (Manual Mode)${colors.reset}`);
+    console.log(`   Delete decisions: ${colors.red}${stats.userDecisions.delete}${colors.reset}`);
+    console.log(`   Keep decisions: ${colors.green}${stats.userDecisions.keep}${colors.reset}`);
+    console.log(`   Convert to info: ${colors.cyan}${stats.userDecisions.convertInfo}${colors.reset}`);
+    console.log(`   Convert to error: ${colors.magenta}${stats.userDecisions.convertError}${colors.reset}`);
+    if (stats.userDecisions.skip > 0) {
+      console.log(`   Skipped: ${colors.dim}${stats.userDecisions.skip}${colors.reset}`);
+    }
+  }
+  
+  // Performance metrics
+  console.log(`\n${colors.blue}⏱️  PERFORMANCE METRICS${colors.reset}`);
+  console.log(`   Processing time: ${colors.cyan}${stats.processingTime}ms${colors.reset}`);
+  if (stats.totalFiles > 0) {
+    console.log(`   Average time per file: ${colors.cyan}${Math.round(stats.averageTimePerFile)}ms${colors.reset}`);
+  }
+  
+  // Generate recommendations
+  const recommendations = generateRecommendations(stats, config);
+  if (recommendations.length > 0) {
+    console.log(`\n${colors.blue}💡 RECOMMENDATIONS${colors.reset}`);
+    recommendations.forEach((rec, index) => {
+      console.log(`   ${index + 1}. ${rec}`);
+    });
+  }
+  
+  // Security summary
+  generateSecuritySummary(stats, config, colors);
+  
+  // Final status
+  console.log(`\n${colors.blue}${'='.repeat(60)}${colors.reset}`);
+  if (config.dryRun) {
+    console.log(`${colors.yellow}🔍 DRY RUN COMPLETE - No files were modified${colors.reset}`);
+    if (stats.totalRemoved > 0 || stats.totalConverted > 0) {
+      console.log(`${colors.blue}Run without --dry-run to apply these changes${colors.reset}`);
+    }
+  } else if (stats.totalRemoved === 0 && stats.totalConverted === 0) {
+    console.log(`${colors.green}✅ CLEANUP COMPLETE - No unnecessary console.log statements found!${colors.reset}`);
+  } else {
+    console.log(`${colors.green}✅ CLEANUP COMPLETE - Codebase successfully cleaned!${colors.reset}`);
+  }
+  console.log(`${colors.blue}${'='.repeat(60)}${colors.reset}\n`);
+}
+
+/**
+ * Generate intelligent recommendations based on analysis results
+ * @param {Object} stats - Statistics object
+ * @param {Object} config - Configuration object
+ * @returns {Array<string>} Array of recommendation strings
+ */
+function generateRecommendations(stats, config) {
+  const recommendations = [];
+  
+  // Security recommendations
+  if (stats.sensitiveLogsKept > 0) {
+    if (stats.sensitiveLogsByRiskLevel.high > 0) {
+      recommendations.push(`${colors.red}URGENT: Review ${stats.sensitiveLogsByRiskLevel.high} high-risk console.log statements that may expose credentials${colors.reset}`);
+    }
+    if (stats.sensitiveLogsByRiskLevel.medium > 0) {
+      recommendations.push(`${colors.yellow}Review ${stats.sensitiveLogsByRiskLevel.medium} medium-risk console.log statements for privacy concerns${colors.reset}`);
+    }
+    recommendations.push(`${colors.blue}Consider implementing a logging framework with proper log levels${colors.reset}`);
+  }
+  
+  // Functional logging recommendations
+  if (stats.functionalLogsPreserved > 0) {
+    recommendations.push(`${colors.green}Consider converting ${stats.functionalLogsPreserved} functional console.log statements to appropriate log levels (info, warn, error)${colors.reset}`);
+  }
+  
+  // Catch block recommendations
+  if (stats.consoleLogsInCatchBlocks > 0) {
+    const unconverted = stats.consoleLogsInCatchBlocks - (stats.convertedToError || 0);
+    if (unconverted > 0) {
+      recommendations.push(`${colors.yellow}Convert remaining ${unconverted} console.log statements in catch blocks to console.error${colors.reset}`);
+    }
+  }
+  
+  // Mode-specific recommendations
+  if (config.mode === 'auto' && stats.functionalLogsPreserved > 0) {
+    recommendations.push(`${colors.blue}Run in manual mode to review ${stats.functionalLogsPreserved} preserved statements individually${colors.reset}`);
+  }
+  
+  // Performance recommendations
+  if (stats.totalFiles > 100 && stats.averageTimePerFile > 50) {
+    recommendations.push(`${colors.blue}Consider using exclusion patterns to skip non-essential directories for better performance${colors.reset}`);
+  }
+  
+  // Best practices
+  if (stats.totalRemoved > 0 || stats.totalConverted > 0) {
+    recommendations.push(`${colors.green}Set up pre-commit hooks to prevent console.log statements from entering the codebase${colors.reset}`);
+    recommendations.push(`${colors.blue}Consider using a linting rule to catch console.log statements during development${colors.reset}`);
+  }
+  
+  return recommendations;
+}
+
+/**
+ * Generate security-focused summary and improvements made
+ * @param {Object} stats - Statistics object
+ * @param {Object} config - Configuration object
+ * @param {Object} colors - Color constants
+ */
+function generateSecuritySummary(stats, config, colors) {
+  if (stats.potentiallySensitive === 0 && stats.totalRemoved === 0) {
+    return; // No security improvements to report
+  }
+  
+  console.log(`\n${colors.green}🛡️  SECURITY IMPROVEMENTS SUMMARY${colors.reset}`);
+  
+  const improvements = [];
+  
+  if (stats.sensitiveLogsRemoved > 0) {
+    improvements.push(`Removed ${stats.sensitiveLogsRemoved} potentially sensitive console.log statements`);
+  }
+  
+  if (stats.totalRemoved > 0) {
+    improvements.push(`Eliminated ${stats.totalRemoved} debugging console.log statements that could leak information`);
+  }
+  
+  if (stats.commentedLogsRemoved > 0) {
+    improvements.push(`Cleaned up ${stats.commentedLogsRemoved} commented console.log statements`);
+  }
+  
+  if (stats.convertedToError > 0) {
+    improvements.push(`Converted ${stats.convertedToError} console.log statements to proper error logging`);
+  }
+  
+  if (improvements.length > 0) {
+    improvements.forEach((improvement, index) => {
+      console.log(`   ${colors.green}✓${colors.reset} ${improvement}`);
+    });
+    
+    console.log(`\n   ${colors.green}🎯 Security Impact:${colors.reset}`);
+    console.log(`   • Reduced risk of credential exposure in logs`);
+    console.log(`   • Improved error handling and debugging practices`);
+    console.log(`   • Cleaner codebase with better maintainability`);
+    
+    if (stats.sensitiveLogsKept > 0) {
+      console.log(`\n   ${colors.yellow}⚠️  Action Required:${colors.reset}`);
+      console.log(`   • ${stats.sensitiveLogsKept} potentially sensitive logs still remain`);
+      console.log(`   • Manual review recommended for remaining sensitive statements`);
+      console.log(`   • Consider implementing proper secret management practices`);
+    }
+  }
+}
+
+/**
  * Flag potentially sensitive console.log statements for special attention
  * @param {string} line - Line containing console.log
  * @param {number} lineNumber - Line number for reporting
@@ -662,10 +953,31 @@ async function processFile(filePath, modeController) {
     // Use ModeController to process the file
     const result = await modeController.processFile(filePath, content);
     
-    // Update global statistics from the result
+    // Update enhanced global statistics from the result
     stats.totalConsoleLogFound += result.statistics.consoleLogsFound;
+    stats.totalConsoleLogProcessed += result.statistics.consoleLogsProcessed || result.statistics.consoleLogsFound;
     stats.potentiallySensitive += result.statistics.potentiallySensitive;
     stats.commentedLogsRemoved += result.statistics.commentedLogsRemoved;
+    stats.totalConverted += result.statistics.consoleLogsConverted;
+    stats.totalRemoved += result.statistics.consoleLogsRemoved;
+    
+    // Track security-related statistics
+    if (result.statistics.sensitiveLogsProcessed) {
+      stats.sensitiveLogsRemoved += result.statistics.sensitiveLogsRemoved || 0;
+      stats.sensitiveLogsKept += result.statistics.sensitiveLogsKept || 0;
+      
+      // Track by risk level
+      if (result.statistics.sensitiveLogsByRisk) {
+        stats.sensitiveLogsByRiskLevel.high += result.statistics.sensitiveLogsByRisk.high || 0;
+        stats.sensitiveLogsByRiskLevel.medium += result.statistics.sensitiveLogsByRisk.medium || 0;
+        stats.sensitiveLogsByRiskLevel.low += result.statistics.sensitiveLogsByRisk.low || 0;
+      }
+    }
+    
+    // Track context-based statistics
+    stats.consoleLogsInCatchBlocks += result.statistics.catchBlockLogsFound || 0;
+    stats.functionalConsoleLogsDetected += result.statistics.functionalLogsDetected || 0;
+    stats.commentedConsoleLogsFound += result.statistics.commentedLogsFound || 0;
     
     // Handle file writing and statistics
     if (result.modified) {
@@ -774,12 +1086,26 @@ async function main() {
       }
     }
 
-    // Get session statistics from ModeController
+    // Get comprehensive session statistics from ModeController
     const sessionStats = modeController.getSessionStats();
     
-    // Update global stats with session data
-    stats.totalConverted = sessionStats.convertedToInfo + sessionStats.convertedToError;
-    stats.functionalLogsPreserved = sessionStats.kept;
+    // Update global stats with enhanced session data
+    stats.totalKept = sessionStats.kept;
+    stats.convertedToInfo = sessionStats.convertedToInfo;
+    stats.convertedToError = sessionStats.convertedToError;
+    stats.functionalLogsPreserved = sessionStats.functionalLogsPreserved;
+    
+    // Update user decision tracking for manual mode
+    if (config.mode === 'manual') {
+      stats.userDecisions.delete = sessionStats.deleted;
+      stats.userDecisions.keep = sessionStats.kept;
+      stats.userDecisions.convertInfo = sessionStats.convertedToInfo;
+      stats.userDecisions.convertError = sessionStats.convertedToError;
+      stats.userDecisions.skip = sessionStats.skipped;
+    }
+    
+    // Calculate averages and derived statistics
+    stats.averageTimePerFile = stats.totalFiles > 0 ? stats.processingTime / stats.totalFiles : 0;
 
   } finally {
     // Always cleanup ModeController resources
@@ -794,36 +1120,8 @@ async function main() {
     modeController.displaySessionSummary();
   }
 
-  // Summary
-  console.log(`${colors.blue}=== Summary ===${colors.reset}`);
-  console.log(`Files scanned: ${stats.totalFiles}`);
-  console.log(`Files with console.log: ${stats.filesWithConsoleLog}`);
-
-  if (config.dryRun) {
-    console.log(`Files that would be modified: ${stats.modifiedFiles}`);
-    console.log(`Console.log statements that would be removed: ${stats.totalRemoved}`);
-  } else {
-    console.log(`Files modified: ${stats.modifiedFiles}`);
-    console.log(`Console.log statements removed: ${stats.totalRemoved}`);
-  }
-
-  // Enhanced reporting
-  if (config.enhancedReporting) {
-    console.log(`${colors.blue}=== Enhanced Report ===${colors.reset}`);
-    console.log(`Total console.log statements found: ${stats.totalConsoleLogFound}`);
-    console.log(`Commented logs removed: ${stats.commentedLogsRemoved}`);
-    console.log(`Functional logs preserved: ${stats.functionalLogsPreserved}`);
-    console.log(`Statements converted: ${stats.totalConverted}`);
-    console.log(`Potentially sensitive logs flagged: ${stats.potentiallySensitive}`);
-    console.log(`Processing time: ${stats.processingTime}ms`);
-    
-    if (stats.functionalLogsPreserved > 0) {
-      console.log(`${colors.green}✓ Preserved ${stats.functionalLogsPreserved} functional console.log statements${colors.reset}`);
-    }
-    if (stats.potentiallySensitive > 0) {
-      console.log(`${colors.yellow}⚠ Found ${stats.potentiallySensitive} potentially sensitive console.log statements${colors.reset}`);
-    }
-  }
+  // Generate comprehensive summary report
+  generateSummaryReport(stats, config, colors);
 
   if (stats.totalRemoved > 0 && config.dryRun) {
     console.log(`${colors.yellow}Run without --dry-run to actually remove the console.log statements${colors.reset}`);
