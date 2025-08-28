@@ -33,7 +33,11 @@ let config = {
   startDir: process.cwd(),
   interactive: true, // Enable interactive prompts in manual mode
   enhancedReporting: false, // Enhanced reporting with detailed breakdown
-  excludePatterns: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
+  excludePatterns: ['node_modules/**', '.git/**', 'dist/**', 'build/**'],
+  // Backup and error handling configuration
+  backupDir: '.console-log-cleanup-backups',
+  autoCleanup: true, // Automatically cleanup backups after successful operations
+  logErrors: true // Log errors to file
 };
 
 // Enhanced statistics tracking for comprehensive reporting
@@ -111,6 +115,9 @@ function showUsage() {
   console.log('  -r, --enhanced-report   Generate enhanced reporting with detailed breakdown');
   console.log('  --start-dir <path>      Starting directory (default: current directory)');
   console.log('  --exclude <pattern>     Add exclusion pattern (can be used multiple times)');
+  console.log('  --backup-dir <path>     Backup directory (default: .console-log-cleanup-backups)');
+  console.log('  --no-backup-cleanup     Disable automatic backup cleanup after successful operations');
+  console.log('  --no-error-log          Disable error logging to file');
   console.log('  -h, --help              Show this help message');
   console.log('');
   console.log('EXAMPLES:');
@@ -196,6 +203,23 @@ function parseArgs() {
           process.exit(1);
         }
         config.excludePatterns.push(args[i]);
+        break;
+        
+      case '--backup-dir':
+        i++;
+        if (i >= args.length) {
+          console.error(`${colors.red}Error: --backup-dir requires a path${colors.reset}`);
+          process.exit(1);
+        }
+        config.backupDir = args[i];
+        break;
+        
+      case '--no-backup-cleanup':
+        config.autoCleanup = false;
+        break;
+        
+      case '--no-error-log':
+        config.logErrors = false;
         break;
         
       case '-h':
@@ -1031,45 +1055,52 @@ async function findFiles(dir, files = []) {
 
 async function main() {
   const startTime = Date.now();
-  parseArgs();
-
-  console.log(`${colors.blue}Starting console.log cleanup...${colors.reset}`);
-  console.log(`${colors.blue}Mode: ${config.mode.toUpperCase()}${colors.reset}`);
+  let modeController = null;
+  let sessionValid = true;
   
-  if (config.mode === 'manual') {
-    console.log(`${colors.blue}Manual mode: You will be prompted to review each console.log statement${colors.reset}`);
-  } else {
-    console.log(`${colors.blue}Auto mode: Automatically removing safe-to-remove console.log statements${colors.reset}`);
-  }
-  
-  if (config.dryRun) {
-    console.log(`${colors.yellow}DRY RUN MODE - No files will be modified${colors.reset}`);
-  }
-  
-  if (config.interactive && config.mode === 'manual') {
-    console.log(`${colors.blue}Interactive mode enabled${colors.reset}`);
-  }
-  
-  if (config.enhancedReporting) {
-    console.log(`${colors.blue}Enhanced reporting enabled${colors.reset}`);
-  }
-
-  // Initialize ModeController with current configuration
-  const modeController = new ModeController(config, colors);
-
-  // Find all JavaScript/TypeScript files
-  const files = await findFiles(config.startDir);
-
-  console.log(`${colors.blue}Found ${files.length} JavaScript/TypeScript files${colors.reset}`);
-
-  if (files.length === 0) {
-    console.log(`${colors.yellow}No JavaScript/TypeScript files found${colors.reset}`);
-    modeController.cleanup();
-    return;
-  }
-
   try {
-    // Process each file using ModeController
+    parseArgs();
+
+    console.log(`${colors.blue}Starting console.log cleanup...${colors.reset}`);
+    console.log(`${colors.blue}Mode: ${config.mode.toUpperCase()}${colors.reset}`);
+    
+    if (config.mode === 'manual') {
+      console.log(`${colors.blue}Manual mode: You will be prompted to review each console.log statement${colors.reset}`);
+    } else {
+      console.log(`${colors.blue}Auto mode: Automatically removing safe-to-remove console.log statements${colors.reset}`);
+    }
+    
+    if (config.dryRun) {
+      console.log(`${colors.yellow}DRY RUN MODE - No files will be modified${colors.reset}`);
+    } else {
+      console.log(`${colors.blue}Backup system enabled - files will be backed up before modification${colors.reset}`);
+    }
+    
+    if (config.interactive && config.mode === 'manual') {
+      console.log(`${colors.blue}Interactive mode enabled${colors.reset}`);
+    }
+    
+    if (config.enhancedReporting) {
+      console.log(`${colors.blue}Enhanced reporting enabled${colors.reset}`);
+    }
+
+    // Initialize ModeController with current configuration
+    modeController = new ModeController(config, colors);
+
+    // Find all JavaScript/TypeScript files
+    const files = await findFiles(config.startDir);
+
+    console.log(`${colors.blue}Found ${files.length} JavaScript/TypeScript files${colors.reset}`);
+
+    if (files.length === 0) {
+      console.log(`${colors.yellow}No JavaScript/TypeScript files found${colors.reset}`);
+      return;
+    }
+
+    // Process each file using ModeController with comprehensive error handling
+    let processedFiles = 0;
+    let errorCount = 0;
+    
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       stats.totalFiles++;
@@ -1078,45 +1109,115 @@ async function main() {
         console.log(`${colors.blue}Processing file ${stats.totalFiles}/${files.length}: ${file}${colors.reset}`);
       }
 
-      const removedCount = await processFile(file, modeController);
+      try {
+        const removedCount = await processFile(file, modeController);
 
-      if (removedCount > 0) {
-        stats.modifiedFiles++;
-        stats.totalRemoved += removedCount;
+        if (removedCount > 0) {
+          stats.modifiedFiles++;
+          stats.totalRemoved += removedCount;
+        }
+        
+        processedFiles++;
+        
+      } catch (error) {
+        errorCount++;
+        console.error(`${colors.red}Failed to process ${file}: ${error.message}${colors.reset}`);
+        
+        // Check if we should continue or abort
+        if (errorCount > files.length * 0.1) { // More than 10% failure rate
+          console.error(`${colors.red}High error rate detected (${errorCount}/${i + 1} files failed). Aborting operation.${colors.reset}`);
+          sessionValid = false;
+          break;
+        }
+        
+        if (config.verbose) {
+          console.log(`${colors.yellow}Continuing with remaining files...${colors.reset}`);
+        }
       }
+    }
+    
+    console.log(`${colors.blue}Processing completed: ${processedFiles}/${files.length} files processed successfully${colors.reset}`);
+    
+    if (errorCount > 0) {
+      console.log(`${colors.yellow}${errorCount} files encountered errors during processing${colors.reset}`);
     }
 
     // Get comprehensive session statistics from ModeController
-    const sessionStats = modeController.getSessionStats();
+    if (modeController) {
+      const sessionStats = modeController.getSessionStats();
+      
+      // Update global stats with enhanced session data
+      stats.totalKept = sessionStats.kept;
+      stats.convertedToInfo = sessionStats.convertedToInfo;
+      stats.convertedToError = sessionStats.convertedToError;
+      stats.functionalLogsPreserved = sessionStats.functionalLogsPreserved;
+      
+      // Update user decision tracking for manual mode
+      if (config.mode === 'manual') {
+        stats.userDecisions.delete = sessionStats.deleted;
+        stats.userDecisions.keep = sessionStats.kept;
+        stats.userDecisions.convertInfo = sessionStats.convertedToInfo;
+        stats.userDecisions.convertError = sessionStats.convertedToError;
+        stats.userDecisions.skip = sessionStats.skipped;
+      }
+      
+      // Calculate averages and derived statistics
+      stats.averageTimePerFile = stats.totalFiles > 0 ? stats.processingTime / stats.totalFiles : 0;
+    }
+
+  } catch (error) {
+    console.error(`${colors.red}Critical error during processing: ${error.message}${colors.reset}`);
+    sessionValid = false;
     
-    // Update global stats with enhanced session data
-    stats.totalKept = sessionStats.kept;
-    stats.convertedToInfo = sessionStats.convertedToInfo;
-    stats.convertedToError = sessionStats.convertedToError;
-    stats.functionalLogsPreserved = sessionStats.functionalLogsPreserved;
-    
-    // Update user decision tracking for manual mode
-    if (config.mode === 'manual') {
-      stats.userDecisions.delete = sessionStats.deleted;
-      stats.userDecisions.keep = sessionStats.kept;
-      stats.userDecisions.convertInfo = sessionStats.convertedToInfo;
-      stats.userDecisions.convertError = sessionStats.convertedToError;
-      stats.userDecisions.skip = sessionStats.skipped;
+    // Generate error report if possible
+    if (modeController) {
+      try {
+        await modeController.generateErrorReport();
+      } catch (reportError) {
+        console.error(`${colors.red}Failed to generate error report: ${reportError.message}${colors.reset}`);
+      }
     }
     
-    // Calculate averages and derived statistics
-    stats.averageTimePerFile = stats.totalFiles > 0 ? stats.processingTime / stats.totalFiles : 0;
-
+    throw error;
+    
   } finally {
-    // Always cleanup ModeController resources
-    modeController.cleanup();
+    // Always cleanup ModeController resources and handle backups
+    if (modeController) {
+      try {
+        // Validate session integrity
+        const validation = await modeController.validateSession();
+        
+        if (!validation.valid) {
+          console.log(`${colors.yellow}Session validation warnings detected${colors.reset}`);
+          
+          if (validation.recommendations.length > 0) {
+            console.log(`${colors.yellow}Recommendations:${colors.reset}`);
+            validation.recommendations.forEach(rec => {
+              console.log(`  ${colors.yellow}- ${rec}${colors.reset}`);
+            });
+          }
+          
+          // Ask user if they want to rollback in case of validation issues
+          if (!config.dryRun && !sessionValid && config.interactive) {
+            console.log(`${colors.red}Session validation failed. Consider rolling back changes.${colors.reset}`);
+            // In a real implementation, you might want to prompt the user here
+          }
+        }
+        
+        // Cleanup resources
+        await modeController.cleanup();
+        
+      } catch (cleanupError) {
+        console.error(`${colors.red}Error during cleanup: ${cleanupError.message}${colors.reset}`);
+      }
+    }
   }
 
   // Calculate processing time
   stats.processingTime = Date.now() - startTime;
 
   // Display ModeController session summary if in manual mode
-  if (config.mode === 'manual' && config.interactive) {
+  if (modeController && config.mode === 'manual' && config.interactive) {
     modeController.displaySessionSummary();
   }
 
@@ -1127,6 +1228,23 @@ async function main() {
     console.log(`${colors.yellow}Run without --dry-run to actually remove the console.log statements${colors.reset}`);
   } else if (stats.totalRemoved === 0) {
     console.log(`${colors.green}No unnecessary console.log statements found!${colors.reset}`);
+  }
+  
+  // Display backup information if backups were created
+  if (!config.dryRun && modeController && stats.modifiedFiles > 0) {
+    const sessionInfo = modeController.getSessionInfo();
+    if (sessionInfo.backups.totalBackups > 0) {
+      console.log(`${colors.blue}Backup information:${colors.reset}`);
+      console.log(`  ${colors.cyan}${sessionInfo.backups.totalBackups} files backed up${colors.reset}`);
+      console.log(`  ${colors.cyan}Backup directory: ${sessionInfo.backups.backupDir}${colors.reset}`);
+      
+      if (sessionValid) {
+        console.log(`${colors.green}All operations completed successfully. Backups will be cleaned up automatically.${colors.reset}`);
+      } else {
+        console.log(`${colors.yellow}Some operations failed. Backups are preserved for manual recovery.${colors.reset}`);
+        console.log(`${colors.yellow}Use the backup directory to manually restore files if needed.${colors.reset}`);
+      }
+    }
   }
 }
 

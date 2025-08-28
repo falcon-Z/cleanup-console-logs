@@ -4,7 +4,7 @@
   "description": "Utility to cleanup console logs from large codebases",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node test/test-backup-manager.js && node test/test-error-handler.js"
   },
   "repository": {
     "type": "git",
