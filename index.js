@@ -9,6 +9,9 @@ const writeFile = promisify(fs.writeFile);
 const readdir = promisify(fs.readdir);
 const stat = promisify(fs.stat);
 
+// Import the new ModeController
+const ModeController = require('./lib/ModeController');
+
 // Colors for output
 const colors = {
   red: '\x1b[31m',
@@ -641,118 +644,46 @@ function flagSensitiveConsoleLog(line, lineNumber, filePath) {
   return flag;
 }
 
-function processFile(filePath) {
-  return new Promise(async (resolve) => {
-    try {
+// Legacy processFile function - now delegates to ModeController
+async function processFile(filePath, modeController) {
+  try {
+    const content = await readFile(filePath, 'utf8');
+    
+    if (!content.includes('console.log')) {
       if (config.verbose) {
-        console.log(`${colors.blue}Processing: ${filePath}${colors.reset}`);
+        console.log(`${colors.yellow}  No console.log statements found in ${filePath}${colors.reset}`);
       }
-
-      const content = await readFile(filePath, 'utf8');
-      const lines = content.split('\n');
-
-      if (!content.includes('console.log')) {
-        if (config.verbose) {
-          console.log(`${colors.yellow}  No console.log statements found${colors.reset}`);
-        }
-        resolve(0);
-        return;
-      }
-
-      // Track that this file has console.log statements
-      stats.filesWithConsoleLog++;
-
-      const newLines = [];
-      let removedCount = 0;
-      let fileModified = false;
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const lineNumber = i + 1;
-
-        // Check if this line contains console.log (excluding error-related)
-        if (line.includes('console.log') && !line.toLowerCase().includes('err')) {
-          const trimmed = line.trim();
-          stats.totalConsoleLogFound++;
-
-          // Check for sensitive data patterns
-          const sensitiveFlag = flagSensitiveConsoleLog(line, lineNumber, filePath);
-          if (sensitiveFlag.flagged) {
-            stats.potentiallySensitive++;
-            
-            // Display warning for sensitive data
-            const riskColor = sensitiveFlag.riskLevel === 'high' ? colors.red : 
-                             sensitiveFlag.riskLevel === 'medium' ? colors.yellow : colors.blue;
-            
-            console.log(`${riskColor}⚠ SENSITIVE DATA DETECTED (${sensitiveFlag.riskLevel.toUpperCase()} RISK) - Line ${lineNumber}:${colors.reset}`);
-            console.log(`  ${line.trim()}`);
-            console.log(`  Detected: ${sensitiveFlag.detectedPatterns.join(', ')}`);
-            
-            if (config.verbose) {
-              sensitiveFlag.recommendations.forEach(rec => {
-                console.log(`  ${colors.yellow}→ ${rec}${colors.reset}`);
-              });
-            }
-          }
-
-          if (trimmed.startsWith('//') && trimmed.includes('console.log')) {
-            if (config.dryRun) {
-              console.log(`${colors.red}  Would remove line ${lineNumber}: ${colors.reset}${line}`);
-            } else if (config.verbose) {
-              console.log(`${colors.red}  Removing line ${lineNumber}: ${colors.reset}${line}`);
-            }
-            removedCount++;
-            stats.commentedLogsRemoved++;
-            fileModified = true;
-            continue;
-          }
-
-          if (trimmed.startsWith('/*') && trimmed.includes('console.log')) {
-            if (config.dryRun) {
-              console.log(`${colors.red}  Would remove line ${lineNumber}: ${colors.reset}${line}`);
-            } else if (config.verbose) {
-              console.log(`${colors.red}  Removing line ${lineNumber}: ${colors.reset}${line}`);
-            }
-            removedCount++;
-            stats.commentedLogsRemoved++;
-            fileModified = true;
-            continue;
-          }
-
-          // Check if it should be preserved based on context
-          if (shouldPreserveLine(line, lineNumber, lines)) {
-            if (config.verbose) {
-              console.log(`${colors.green}  Preserving line ${lineNumber}: ${colors.reset}${line}`);
-            }
-            stats.functionalLogsPreserved++;
-            newLines.push(line);
-          } else {
-            if (config.dryRun) {
-              console.log(`${colors.red}  Would remove line ${lineNumber}: ${colors.reset}${line}`);
-            } else if (config.verbose) {
-              console.log(`${colors.red}  Removing line ${lineNumber}: ${colors.reset}${line}`);
-            }
-            removedCount++;
-            fileModified = true;
-          }
-        } else {
-          // Keep all other lines
-          newLines.push(line);
-        }
-      }
-
-      // Write file if changes were made and not in dry run mode
-      if (!config.dryRun && fileModified) {
-        await writeFile(filePath, newLines.join('\n'));
-        console.log(`${colors.green}Modified ${filePath}: removed ${removedCount} console.log statements${colors.reset}`);
-      }
-
-      resolve(removedCount);
-    } catch (error) {
-      console.error(`${colors.red}Error processing ${filePath}: ${error.message}${colors.reset}`);
-      resolve(0);
+      return 0;
     }
-  });
+
+    // Track that this file has console.log statements
+    stats.filesWithConsoleLog++;
+
+    // Use ModeController to process the file
+    const result = await modeController.processFile(filePath, content);
+    
+    // Update global statistics from the result
+    stats.totalConsoleLogFound += result.statistics.consoleLogsFound;
+    stats.potentiallySensitive += result.statistics.potentiallySensitive;
+    stats.commentedLogsRemoved += result.statistics.commentedLogsRemoved;
+    
+    // Handle file writing and statistics
+    if (result.modified) {
+      if (!config.dryRun) {
+        await writeFile(filePath, result.newContent);
+        console.log(`${colors.green}Modified ${filePath}: processed ${result.statistics.consoleLogsFound} console.log statements${colors.reset}`);
+      } else {
+        console.log(`${colors.yellow}Would modify ${filePath}: ${result.statistics.consoleLogsFound} console.log statements${colors.reset}`);
+      }
+      
+      return result.statistics.consoleLogsRemoved + result.statistics.consoleLogsConverted;
+    }
+    
+    return 0;
+  } catch (error) {
+    console.error(`${colors.red}Error processing ${filePath}: ${error.message}${colors.reset}`);
+    return 0;
+  }
 }
 
 async function findFiles(dir, files = []) {
@@ -811,6 +742,9 @@ async function main() {
     console.log(`${colors.blue}Enhanced reporting enabled${colors.reset}`);
   }
 
+  // Initialize ModeController with current configuration
+  const modeController = new ModeController(config, colors);
+
   // Find all JavaScript/TypeScript files
   const files = await findFiles(config.startDir);
 
@@ -818,29 +752,47 @@ async function main() {
 
   if (files.length === 0) {
     console.log(`${colors.yellow}No JavaScript/TypeScript files found${colors.reset}`);
+    modeController.cleanup();
     return;
   }
 
+  try {
+    // Process each file using ModeController
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      stats.totalFiles++;
 
-  // Process each file
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    stats.totalFiles++;
+      if (config.verbose || (stats.totalFiles % 50 === 0)) {
+        console.log(`${colors.blue}Processing file ${stats.totalFiles}/${files.length}: ${file}${colors.reset}`);
+      }
 
-    if (config.verbose || (stats.totalFiles % 50 === 0)) {
-      console.log(`${colors.blue}Processing file ${stats.totalFiles}/${files.length}: ${file}${colors.reset}`);
+      const removedCount = await processFile(file, modeController);
+
+      if (removedCount > 0) {
+        stats.modifiedFiles++;
+        stats.totalRemoved += removedCount;
+      }
     }
 
-    const removedCount = await processFile(file);
+    // Get session statistics from ModeController
+    const sessionStats = modeController.getSessionStats();
+    
+    // Update global stats with session data
+    stats.totalConverted = sessionStats.convertedToInfo + sessionStats.convertedToError;
+    stats.functionalLogsPreserved = sessionStats.kept;
 
-    if (removedCount > 0) {
-      stats.modifiedFiles++;
-      stats.totalRemoved += removedCount;
-    }
+  } finally {
+    // Always cleanup ModeController resources
+    modeController.cleanup();
   }
 
   // Calculate processing time
   stats.processingTime = Date.now() - startTime;
+
+  // Display ModeController session summary if in manual mode
+  if (config.mode === 'manual' && config.interactive) {
+    modeController.displaySessionSummary();
+  }
 
   // Summary
   console.log(`${colors.blue}=== Summary ===${colors.reset}`);
