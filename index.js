@@ -183,42 +183,462 @@ function parseArgs() {
   }
 }
 
-function shouldPreserveLine(line) {
+function shouldPreserveLine(line, lineNumber = null, allLines = null) {
   const trimmed = line.trim();
 
-  // Preserve if it's part of a ternary operator
-  if (line.includes('?') && line.includes('console.log') && line.includes(':')) {
-    return true;
-  }
-  if (line.includes(':') && line.includes('console.log') && !trimmed.startsWith('console.log')) {
+  // Enhanced catch block detection - check if console.log is in error handling context
+  if (lineNumber && allLines && isInCatchBlock(lineNumber - 1, allLines)) {
+    // In catch blocks, console.log might be functional for error logging
+    // Preserve it but flag for potential conversion to console.error
     return true;
   }
 
-  // Preserve if it's part of an arrow function assignment or return
-  if (line.includes('=') && line.includes('=>') && line.includes('console.log')) {
+  // Enhanced ternary operator detection - more accurate functional log identification
+  if (isInTernaryOperator(line)) {
     return true;
   }
+
+  // Enhanced arrow function detection - improved detection of functional usage
+  if (isInArrowFunction(line)) {
+    return true;
+  }
+
+  // Enhanced method chaining detection - improved detection of chained calls
+  if (isInMethodChain(line)) {
+    return true;
+  }
+
+  // Preserve if it's part of an assignment or complex expression
+  if (isPartOfExpression(line)) {
+    return true;
+  }
+
+  // Preserve if it's a return statement
   if (line.includes('return') && line.includes('console.log')) {
     return true;
   }
 
-  // Preserve if it's part of a function call chain
-  if (/[a-zA-Z0-9_)\]]\..*console\.log/.test(line)) {
-    return true;
-  }
-  if (/console\.log.*\.[a-zA-Z]/.test(line)) {
-    return true;
-  }
-
-  if (/^[^/\*]*[a-zA-Z0-9_)\]\}].*console\.log/.test(trimmed)) {
-    return true;
-  }
-
-  if (/console\.log.*\)\s*[a-zA-Z0-9_{\[(]/.test(line)) {
-    return true;
-  }
-
   return false;
+}
+
+// Enhanced helper functions for better context detection
+
+/**
+ * Enhanced catch block detection with improved accuracy
+ * @param {number} lineIndex - Current line index (0-based)
+ * @param {Array<string>} allLines - All lines in the file
+ * @returns {boolean} True if in catch block
+ */
+function isInCatchBlock(lineIndex, allLines) {
+  if (!allLines || lineIndex < 0 || lineIndex >= allLines.length) {
+    return false;
+  }
+
+  // Look backwards for catch statement within reasonable scope
+  for (let i = lineIndex; i >= Math.max(0, lineIndex - 20); i--) {
+    const line = allLines[i];
+    if (!line) continue;
+
+    // Match various catch block patterns
+    if (/catch\s*\(\s*\w*\s*\)\s*\{?/.test(line) || 
+        /}\s*catch\s*\(\s*\w*\s*\)/.test(line) ||
+        /catch\s*\(\s*\w*\s*\)/.test(line)) {
+      
+      // Verify we're still inside the catch block by analyzing scope
+      return isWithinBlockScope(i, lineIndex, allLines);
+    }
+  }
+  return false;
+}
+
+/**
+ * Enhanced ternary operator detection with better pattern matching
+ * @param {string} line - Line to check
+ * @returns {boolean} True if part of ternary operator
+ */
+function isInTernaryOperator(line) {
+  const trimmed = line.trim();
+  
+  // Pattern 1: condition ? console.log(...) : something
+  if (/\?\s*console\.log/.test(line) && line.includes(':')) {
+    return true;
+  }
+  
+  // Pattern 2: condition ? something : console.log(...)
+  if (/:\s*console\.log/.test(line) && line.includes('?')) {
+    return true;
+  }
+  
+  // Pattern 3: Multi-line ternary where console.log is on continuation line
+  if (line.includes(':') && line.includes('console.log') && !trimmed.startsWith('console.log')) {
+    // Check if this looks like a ternary continuation
+    if (/^\s*:\s*console\.log/.test(line) || /^\s*console\.log/.test(line)) {
+      return true;
+    }
+  }
+  
+  // Pattern 4: Nested ternary operators
+  if (/console\.log.*\?.*:/.test(line) || /\?.*console\.log.*:/.test(line)) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Enhanced arrow function detection with improved patterns
+ * @param {string} line - Line to check
+ * @returns {boolean} True if part of arrow function
+ */
+function isInArrowFunction(line) {
+  // Pattern 1: Direct arrow function assignment with console.log
+  if (/=\s*\([^)]*\)\s*=>\s*console\.log/.test(line)) {
+    return true;
+  }
+  
+  // Pattern 2: Arrow function without parentheses
+  if (/=\s*\w+\s*=>\s*console\.log/.test(line)) {
+    return true;
+  }
+  
+  // Pattern 3: Arrow function as callback with console.log
+  if (/\(\s*[^)]*\s*\)\s*=>\s*console\.log/.test(line)) {
+    return true;
+  }
+  
+  // Pattern 4: Multi-line arrow function where console.log is the body
+  if (line.includes('=>') && line.includes('console.log')) {
+    return true;
+  }
+  
+  // Pattern 5: Arrow function in array methods (map, filter, etc.)
+  if (/\.(map|filter|forEach|reduce|find|some|every)\s*\([^)]*=>[^)]*console\.log/.test(line)) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Enhanced method chaining detection with improved accuracy
+ * @param {string} line - Line to check
+ * @returns {boolean} True if part of method chain
+ */
+function isInMethodChain(line) {
+  // Pattern 1: Method call before console.log (obj.method().console.log)
+  if (/[a-zA-Z0-9_)\]]\s*\.\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\.\s*console\.log/.test(line)) {
+    return true;
+  }
+  
+  // Pattern 2: Console.log followed by method call (console.log().method())
+  if (/console\.log\s*\([^)]*\)\s*\.\s*[a-zA-Z_]/.test(line)) {
+    return true;
+  }
+  
+  // Pattern 3: Property access before console.log (obj.prop.console.log)
+  if (/[a-zA-Z0-9_)\]]\s*\.\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*console\.log/.test(line)) {
+    return true;
+  }
+  
+  // Pattern 4: Promise chains with console.log
+  if (/\.(then|catch|finally)\s*\(\s*console\.log/.test(line)) {
+    return true;
+  }
+  
+  // Pattern 5: Array method chaining with console.log
+  if (/\.(map|filter|forEach|reduce)\s*\([^)]*console\.log[^)]*\)\s*\./.test(line)) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Enhanced expression detection for complex usage patterns
+ * @param {string} line - Line to check
+ * @returns {boolean} True if part of expression
+ */
+function isPartOfExpression(line) {
+  const trimmed = line.trim();
+  
+  // Skip if line starts with console.log (simple statement)
+  if (trimmed.startsWith('console.log')) {
+    return false;
+  }
+  
+  // Pattern 1: Variable assignment with console.log
+  if (/^[^/\*]*[a-zA-Z0-9_$]\s*=.*console\.log/.test(trimmed)) {
+    return true;
+  }
+  
+  // Pattern 2: Object property assignment
+  if (/^[^/\*]*[a-zA-Z0-9_$]\s*\[\s*[^\]]+\s*\]\s*=.*console\.log/.test(trimmed)) {
+    return true;
+  }
+  
+  // Pattern 3: Function argument with console.log
+  if (/[a-zA-Z0-9_$]\s*\([^)]*console\.log[^)]*\)/.test(line)) {
+    return true;
+  }
+  
+  // Pattern 4: Logical operators with console.log
+  if (/(&&|\|\|)\s*console\.log/.test(line) || /console\.log\s*(&&|\|\|)/.test(line)) {
+    return true;
+  }
+  
+  // Pattern 5: Arithmetic or comparison with console.log
+  if (/[+\-*/%<>=!]\s*console\.log/.test(line) || /console\.log\s*[+\-*/%<>=!]/.test(line)) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Helper function to determine if a line is within a block scope
+ * @param {number} blockStartIndex - Index where block starts
+ * @param {number} targetIndex - Index of target line
+ * @param {Array<string>} allLines - All lines in the file
+ * @returns {boolean} True if target is within the block
+ */
+function isWithinBlockScope(blockStartIndex, targetIndex, allLines) {
+  let braceCount = 0;
+  let foundOpeningBrace = false;
+  
+  // Start from the block start and count braces
+  for (let i = blockStartIndex; i <= targetIndex && i < allLines.length; i++) {
+    const line = allLines[i];
+    if (!line) continue;
+    
+    // Count opening and closing braces
+    const openBraces = (line.match(/\{/g) || []).length;
+    const closeBraces = (line.match(/\}/g) || []).length;
+    
+    braceCount += openBraces - closeBraces;
+    
+    // Mark that we found the opening brace
+    if (openBraces > 0 && !foundOpeningBrace) {
+      foundOpeningBrace = true;
+    }
+    
+    // If we've closed all braces, we're outside the block
+    if (foundOpeningBrace && braceCount <= 0 && i < targetIndex) {
+      return false;
+    }
+  }
+  
+  // We're in the block if we found the opening brace and haven't closed it
+  return foundOpeningBrace && braceCount > 0;
+}
+
+/**
+ * Detect potentially sensitive data in console.log arguments
+ * @param {string} line - Line containing console.log
+ * @returns {Object} Detection result with isSensitive flag and detected patterns
+ */
+function detectSensitiveData(line) {
+  const result = {
+    isSensitive: false,
+    detectedPatterns: [],
+    riskLevel: 'low' // low, medium, high
+  };
+
+  // Extract the console.log arguments
+  const consoleLogMatch = line.match(/console\.log\s*\(\s*([^)]+)\s*\)/);
+  if (!consoleLogMatch) {
+    return result;
+  }
+
+  const args = consoleLogMatch[1];
+  const lowerArgs = args.toLowerCase();
+
+  // High-risk patterns - tokens, keys, passwords
+  const highRiskPatterns = [
+    // API keys and tokens
+    { pattern: /\b(api[_-]?key|apikey)\b/i, type: 'API Key' },
+    { pattern: /\b(access[_-]?token|accesstoken)\b/i, type: 'Access Token' },
+    { pattern: /\b(auth[_-]?token|authtoken)\b/i, type: 'Auth Token' },
+    { pattern: /\b(bearer[_-]?token|bearertoken)\b/i, type: 'Bearer Token' },
+    { pattern: /\b(refresh[_-]?token|refreshtoken)\b/i, type: 'Refresh Token' },
+    { pattern: /\b(secret[_-]?key|secretkey)\b/i, type: 'Secret Key' },
+    { pattern: /\b(private[_-]?key|privatekey)\b/i, type: 'Private Key' },
+    
+    // Passwords and credentials
+    { pattern: /\b(password|passwd|pwd)\b/i, type: 'Password' },
+    { pattern: /\b(credential|cred)\b/i, type: 'Credential' },
+    
+    // JWT and session tokens
+    { pattern: /\b(jwt|session[_-]?token)\b/i, type: 'JWT/Session Token' },
+    
+    // Database and connection strings
+    { pattern: /\b(connection[_-]?string|connectionstring)\b/i, type: 'Connection String' },
+    { pattern: /\b(database[_-]?url|databaseurl)\b/i, type: 'Database URL' },
+    
+    // OAuth and social media tokens
+    { pattern: /\b(oauth[_-]?token|client[_-]?secret)\b/i, type: 'OAuth Token/Secret' }
+  ];
+
+  // Medium-risk patterns - user data and identifiers
+  const mediumRiskPatterns = [
+    // Personal identifiers
+    { pattern: /\b(user[_-]?id|userid)\b/i, type: 'User ID' },
+    { pattern: /\b(email|e[_-]?mail)\b/i, type: 'Email' },
+    { pattern: /\b(phone|telephone|mobile)\b/i, type: 'Phone Number' },
+    { pattern: /\b(ssn|social[_-]?security)\b/i, type: 'SSN' },
+    
+    // Financial data
+    { pattern: /\b(credit[_-]?card|creditcard|card[_-]?number)\b/i, type: 'Credit Card' },
+    { pattern: /\b(bank[_-]?account|account[_-]?number)\b/i, type: 'Bank Account' },
+    
+    // Session and tracking data
+    { pattern: /\b(session[_-]?id|sessionid)\b/i, type: 'Session ID' },
+    { pattern: /\b(tracking[_-]?id|trackingid)\b/i, type: 'Tracking ID' },
+    
+    // IP addresses and network info
+    { pattern: /\b(ip[_-]?address|ipaddress)\b/i, type: 'IP Address' },
+    { pattern: /\b(mac[_-]?address|macaddress)\b/i, type: 'MAC Address' }
+  ];
+
+  // Low-risk patterns - potentially sensitive but context-dependent
+  const lowRiskPatterns = [
+    { pattern: /\b(hash|checksum)\b/i, type: 'Hash/Checksum' },
+    { pattern: /\b(signature|sig)\b/i, type: 'Signature' },
+    { pattern: /\b(nonce|salt)\b/i, type: 'Nonce/Salt' }
+  ];
+
+  // Check for actual token/key-like values (long alphanumeric strings)
+  const tokenPatterns = [
+    // JWT-like tokens (base64 with dots)
+    { pattern: /[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/, type: 'JWT Token Value' },
+    
+    // API key-like strings (long alphanumeric)
+    { pattern: /[A-Za-z0-9]{32,}/, type: 'Potential API Key Value' },
+    
+    // UUID patterns
+    { pattern: /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i, type: 'UUID' },
+    
+    // Base64-encoded data (longer strings)
+    { pattern: /[A-Za-z0-9+/]{40,}={0,2}/, type: 'Base64 Data' }
+  ];
+
+  // Check high-risk patterns
+  for (const { pattern, type } of highRiskPatterns) {
+    if (pattern.test(args)) {
+      result.isSensitive = true;
+      result.riskLevel = 'high';
+      result.detectedPatterns.push(type);
+    }
+  }
+
+  // Check medium-risk patterns (only if not already high risk)
+  if (result.riskLevel !== 'high') {
+    for (const { pattern, type } of mediumRiskPatterns) {
+      if (pattern.test(args)) {
+        result.isSensitive = true;
+        result.riskLevel = 'medium';
+        result.detectedPatterns.push(type);
+      }
+    }
+  }
+
+  // Check low-risk patterns (only if not already medium or high risk)
+  if (result.riskLevel === 'low') {
+    for (const { pattern, type } of lowRiskPatterns) {
+      if (pattern.test(args)) {
+        result.isSensitive = true;
+        result.detectedPatterns.push(type);
+      }
+    }
+  }
+
+  // Check for actual token/key values
+  for (const { pattern, type } of tokenPatterns) {
+    if (pattern.test(args)) {
+      result.isSensitive = true;
+      if (result.riskLevel === 'low') {
+        result.riskLevel = 'high'; // Actual token values are high risk
+      }
+      result.detectedPatterns.push(type);
+    }
+  }
+
+  // Additional heuristics for sensitive data
+  
+  // Check for variable names that suggest sensitive data
+  if (/\b(token|key|secret|password|credential|auth)\w*\s*[,)]/.test(lowerArgs)) {
+    result.isSensitive = true;
+    if (result.riskLevel === 'low') {
+      result.riskLevel = 'medium';
+    }
+    result.detectedPatterns.push('Sensitive Variable Name');
+  }
+
+  // Check for object properties that might contain sensitive data
+  if (/\.(token|key|secret|password|credential|auth)\w*\b/.test(lowerArgs)) {
+    result.isSensitive = true;
+    if (result.riskLevel === 'low') {
+      result.riskLevel = 'medium';
+    }
+    result.detectedPatterns.push('Sensitive Object Property');
+  }
+
+  // Check for destructured sensitive properties
+  if (/\{\s*[^}]*(token|key|secret|password|credential|auth)\w*[^}]*\}/.test(lowerArgs)) {
+    result.isSensitive = true;
+    if (result.riskLevel === 'low') {
+      result.riskLevel = 'medium';
+    }
+    result.detectedPatterns.push('Destructured Sensitive Property');
+  }
+
+  return result;
+}
+
+/**
+ * Flag potentially sensitive console.log statements for special attention
+ * @param {string} line - Line containing console.log
+ * @param {number} lineNumber - Line number for reporting
+ * @param {string} filePath - File path for reporting
+ * @returns {Object} Flagging result with recommendations
+ */
+function flagSensitiveConsoleLog(line, lineNumber, filePath) {
+  const sensitiveData = detectSensitiveData(line);
+  
+  if (!sensitiveData.isSensitive) {
+    return { flagged: false };
+  }
+
+  const flag = {
+    flagged: true,
+    riskLevel: sensitiveData.riskLevel,
+    detectedPatterns: sensitiveData.detectedPatterns,
+    line: lineNumber,
+    filePath: filePath,
+    content: line.trim(),
+    recommendations: []
+  };
+
+  // Generate recommendations based on risk level and patterns
+  switch (sensitiveData.riskLevel) {
+    case 'high':
+      flag.recommendations.push('URGENT: Remove this console.log - it may expose sensitive credentials');
+      flag.recommendations.push('Consider using environment variables for sensitive data');
+      flag.recommendations.push('Review if this data should be logged at all');
+      break;
+      
+    case 'medium':
+      flag.recommendations.push('Review this console.log for potential privacy concerns');
+      flag.recommendations.push('Consider redacting or masking sensitive parts');
+      flag.recommendations.push('Use console.error for error-related logging instead');
+      break;
+      
+    case 'low':
+      flag.recommendations.push('Consider if this data should be logged in production');
+      flag.recommendations.push('Use appropriate log levels (info, warn, error)');
+      break;
+  }
+
+  return flag;
 }
 
 function processFile(filePath) {
@@ -255,6 +675,26 @@ function processFile(filePath) {
           const trimmed = line.trim();
           stats.totalConsoleLogFound++;
 
+          // Check for sensitive data patterns
+          const sensitiveFlag = flagSensitiveConsoleLog(line, lineNumber, filePath);
+          if (sensitiveFlag.flagged) {
+            stats.potentiallySensitive++;
+            
+            // Display warning for sensitive data
+            const riskColor = sensitiveFlag.riskLevel === 'high' ? colors.red : 
+                             sensitiveFlag.riskLevel === 'medium' ? colors.yellow : colors.blue;
+            
+            console.log(`${riskColor}⚠ SENSITIVE DATA DETECTED (${sensitiveFlag.riskLevel.toUpperCase()} RISK) - Line ${lineNumber}:${colors.reset}`);
+            console.log(`  ${line.trim()}`);
+            console.log(`  Detected: ${sensitiveFlag.detectedPatterns.join(', ')}`);
+            
+            if (config.verbose) {
+              sensitiveFlag.recommendations.forEach(rec => {
+                console.log(`  ${colors.yellow}→ ${rec}${colors.reset}`);
+              });
+            }
+          }
+
           if (trimmed.startsWith('//') && trimmed.includes('console.log')) {
             if (config.dryRun) {
               console.log(`${colors.red}  Would remove line ${lineNumber}: ${colors.reset}${line}`);
@@ -280,7 +720,7 @@ function processFile(filePath) {
           }
 
           // Check if it should be preserved based on context
-          if (shouldPreserveLine(line)) {
+          if (shouldPreserveLine(line, lineNumber, lines)) {
             if (config.verbose) {
               console.log(`${colors.green}  Preserving line ${lineNumber}: ${colors.reset}${line}`);
             }
